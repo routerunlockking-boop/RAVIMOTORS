@@ -84,8 +84,8 @@ const initializeDatabase = async () => {
             await User.updateOne(
                 { _id: adminExists._id },
                 {
-                    email: 'smartzonelk101@gmail.com',
-                    password: '200723800385@',
+                    email: 'ochithyaminsilu6@gmail.com',
+                    password: '10669Abc',
                     role: 'admin'
                 }
             );
