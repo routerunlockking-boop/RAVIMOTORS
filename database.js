@@ -10,7 +10,7 @@ const connectDB = async () => {
     }
 
     try {
-        const uri = process.env.MONGO_URI || 'mongodb+srv://ravimotors:10669Abc@cluster0.mqdicae.mongodb.net/testdb?retryWrites=true&w=majority';
+        const uri = process.env.MONGO_URI || 'mongodb+srv://test:Abc%4012345@cluster0.a77j2uu.mongodb.net/?appName=Cluster0';
         const db = await mongoose.connect(uri, {
             serverSelectionTimeoutMS: 5000 // Tweak timeout down so Serverless fails faster instead of hanging
         });
@@ -32,13 +32,16 @@ const UserSchema = new mongoose.Schema({
     business_name: { type: String, required: true },
     whatsapp_number: { type: String },
     marketplace_enabled: { type: Boolean, default: false },
-    role: { type: String, default: 'user' }
+    role: { type: String, default: 'user' },
+    is_active: { type: Boolean, default: false },
+    delete_request: { type: Boolean, default: false }
 });
 
 const ProductSchema = new mongoose.Schema({
     user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     name: { type: String, required: true },
     quantity: { type: Number, default: 0 },
+    barcode: { type: String, default: '' },
     cost_price: { type: Number, default: 0.0 },
     price: { type: Number, default: 0.0 },
     image: { type: String }
@@ -58,6 +61,9 @@ const InvoiceSchema = new mongoose.Schema({
     invoice_number: { type: String, required: true },
     date: { type: String, required: true }, // Format: YYYY-MM-DD
     time: { type: String, required: true }, // Format: HH:MM
+    customer_name: { type: String, default: '' },
+    customer_phone: { type: String, default: '' },
+    payment_method: { type: String, default: 'Cash' },
     total_amount: { type: Number, default: 0.0 },
     total_profit: { type: Number, default: 0.0 },
     items: [InvoiceItemSchema]
@@ -74,19 +80,21 @@ const initializeDatabase = async () => {
         const adminExists = await User.findOne({ role: 'admin' });
         if (!adminExists) {
             await User.create({
-                email: 'ochithyaminsilu6@gmail.com',
-                password: '10669Abc',
+                email: 'smartzonelk101@gmail.com',
+                password: '200723800385@',
                 business_name: 'Admin Portal',
-                role: 'admin'
+                role: 'admin',
+                is_active: true
             });
             console.log('Admin user created.');
         } else {
             await User.updateOne(
                 { _id: adminExists._id },
                 {
-                    email: 'ochithyaminsilu6@gmail.com',
-                    password: '10669Abc',
-                    role: 'admin'
+                    email: 'smartzonelk101@gmail.com',
+                    password: '200723800385@',
+                    role: 'admin',
+                    is_active: true
                 }
             );
             // Also clean up the old 'Admin' text if it exists but wasn't caught by the role query

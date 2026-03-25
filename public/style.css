@@ -1,4 +1,3 @@
-/* Variables & Color Palette - Modern Premium Aesthetics */
 :root {
     --primary: #4f46e5;
     --primary-hover: #4338ca;
@@ -16,6 +15,20 @@
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
     --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.dark-mode {
+    --secondary: #334155;
+    --bg-body: #0f172a;
+    --bg-card: #1e293b;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --danger-light: #7f1d1d;
+    --success-light: #14532d;
+    --border: #334155;
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
 }
 
 * {
@@ -205,7 +218,7 @@ body {
     align-items: center;
     justify-content: center;
     font-size: 28px;
-    background-color: #eef2ff;
+    background-color: var(--secondary);
     color: var(--primary);
 }
 
@@ -279,7 +292,7 @@ body {
 }
 
 .data-table th {
-    background-color: #f8fafc;
+    background-color: var(--secondary);
     font-size: 13px;
     font-weight: 600;
     color: var(--text-muted);
@@ -297,7 +310,7 @@ body {
 }
 
 .data-table tbody tr:hover {
-    background-color: #f8fafc;
+    background-color: var(--secondary);
 }
 
 /* UI Elements */
@@ -413,7 +426,7 @@ body {
 
 .pos-product-card:hover {
     border-color: var(--primary);
-    background-color: #eef2ff;
+    background-color: var(--secondary);
 }
 
 .pos-product-card h4 {
@@ -541,7 +554,7 @@ body {
 
 .close-btn { background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-muted); }
 
-.modal-body { padding: 24px; }
+.modal-body { padding: 24px; max-height: 60vh; overflow-y: auto; }
 .modal-footer { padding: 20px 24px; border-top: 1px solid var(--border); }
 
 .form-group { margin-bottom: 20px; }
@@ -563,9 +576,13 @@ body {
 
 /* Print Styles */
 @media print {
+    @page {
+        margin: 0;
+        size: 80mm auto; /* Continuously adapts to receipt length */
+    }
     body * { visibility: hidden; }
     #print-area, #print-area * { visibility: visible; }
-    #print-area { position: absolute; left: 0; top: 0; width: 80mm; padding: 10px; font-family: monospace; font-size: 12px; }
+    #print-area { position: relative; width: 80mm; height: auto; padding: 10px; font-family: monospace; font-size: 12px; }
     .receipt-header, .receipt-footer { text-align: center; }
     .receipt-table { width: 100%; border-collapse: collapse; margin-block: 10px; }
     .receipt-table th, .receipt-table td { text-align: left; padding: 2px 0; }

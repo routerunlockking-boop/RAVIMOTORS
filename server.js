@@ -32,11 +32,9 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(400).json({ error: 'User already exists' });
         }
         
-        const user = await User.create({ email, password, business_name, whatsapp_number });
+        const user = await User.create({ email, password, business_name, whatsapp_number, is_active: false, marketplace_enabled: true });
         res.status(201).json({ 
-            token: user._id.toString(), 
-            business_name: user.business_name, 
-            role: user.role 
+            message: 'Account creation successful. Pending admin approval.'
         });
     } catch (err) {
         return res.status(500).json({ error: err.message });
@@ -53,6 +51,9 @@ app.post('/api/auth/login', async (req, res) => {
         const user = await User.findOne({ email, password });
         if (!user) {
             return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        if (!user.is_active && user.role !== 'admin') {
+            return res.status(403).json({ error: 'Account pending admin approval' });
         }
         res.json({ token: user._id.toString(), business_name: user.business_name, role: user.role });
     } catch (err) {
@@ -83,6 +84,15 @@ app.use('/api', (req, res, next) => {
     return authMiddleware(req, res, next);
 });
 
+app.post('/api/user/request-disconnect', async (req, res) => {
+    try {
+        await User.findByIdAndUpdate(req.user._id, { delete_request: true });
+        res.json({ message: 'Disconnect request sent to admin successfully' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // ==== ADMIN API ====
 
 const adminMiddleware = (req, res, next) => {
@@ -102,7 +112,9 @@ app.get('/api/admin/users', adminMiddleware, async (req, res) => {
             business_name: u.business_name,
             whatsapp_number: u.whatsapp_number,
             marketplace_enabled: u.marketplace_enabled,
-            role: u.role
+            role: u.role,
+            is_active: u.is_active,
+            delete_request: u.delete_request
         }));
         res.json(mappedUsers);
     } catch (err) {
@@ -111,11 +123,11 @@ app.get('/api/admin/users', adminMiddleware, async (req, res) => {
 });
 
 app.put('/api/admin/users/:id', adminMiddleware, async (req, res) => {
-    const { email, business_name, whatsapp_number, marketplace_enabled } = req.body;
+    const { email, business_name, whatsapp_number, marketplace_enabled, is_active } = req.body;
     try {
         const user = await User.findByIdAndUpdate(
             req.params.id,
-            { email, business_name, whatsapp_number, marketplace_enabled },
+            { email, business_name, whatsapp_number, marketplace_enabled, is_active },
             { new: true }
         ).select('-password');
         if (!user) return res.status(404).json({ error: 'User not found' });
@@ -218,6 +230,7 @@ app.get('/api/products', async (req, res) => {
         const mappedProducts = products.map(p => ({
             id: p._id.toString(),
             name: p.name,
+            barcode: p.barcode || '',
             quantity: p.quantity,
             cost_price: p.cost_price,
             price: p.price,
@@ -232,7 +245,7 @@ app.get('/api/products', async (req, res) => {
 });
 
 app.post('/api/products', async (req, res) => {
-    const { name, quantity, cost_price, price, image } = req.body;
+    const { name, barcode, quantity, cost_price, price, image } = req.body;
     if (!name || quantity === undefined || price === undefined) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -241,24 +254,25 @@ app.post('/api/products', async (req, res) => {
         const product = await Product.create({
             user_id: req.user._id,
             name,
+            barcode: barcode || '',
             quantity,
             cost_price: cost_price || 0,
             price,
             image
         });
-        res.status(201).json({ id: product._id.toString(), name, quantity, cost_price: product.cost_price, price, image });
+        res.status(201).json({ id: product._id.toString(), name, barcode: product.barcode, quantity, cost_price: product.cost_price, price, image });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
 });
 
 app.put('/api/products/:id', async (req, res) => {
-    const { name, quantity, cost_price, price, image } = req.body;
+    const { name, barcode, quantity, cost_price, price, image } = req.body;
     try {
         const queryFilter = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, user_id: req.user._id };
         const product = await Product.findOneAndUpdate(
             queryFilter,
-            { name, quantity, cost_price: cost_price || 0, price, image },
+            { name, barcode: barcode || '', quantity, cost_price: cost_price || 0, price, image },
             { new: true }
         );
         if (!product) return res.status(404).json({ error: 'Product not found' });
@@ -300,6 +314,9 @@ app.get('/api/invoices', async (req, res) => {
         const mappedInvoices = invoices.map(inv => ({
             id: inv._id.toString(),
             invoice_number: inv.invoice_number,
+            customer_name: inv.customer_name || '',
+            customer_phone: inv.customer_phone || '',
+            payment_method: inv.payment_method || 'Cash',
             date: inv.date,
             time: inv.time,
             total_amount: inv.total_amount,
@@ -322,6 +339,9 @@ app.get('/api/invoices/:id', async (req, res) => {
         const response = {
             id: invoice._id.toString(),
             invoice_number: invoice.invoice_number,
+            customer_name: invoice.customer_name || '',
+            customer_phone: invoice.customer_phone || '',
+            payment_method: invoice.payment_method || 'Cash',
             date: invoice.date,
             time: invoice.time,
             total_amount: invoice.total_amount,
@@ -340,7 +360,7 @@ app.get('/api/invoices/:id', async (req, res) => {
 });
 
 app.post('/api/invoices', async (req, res) => {
-    const { items, total_amount } = req.body;
+    const { items, total_amount, customer_name, customer_phone, payment_method } = req.body;
     if (!items || items.length === 0 || !total_amount) {
         return res.status(400).json({ error: 'Invalid invoice data' });
     }
@@ -374,6 +394,9 @@ app.post('/api/invoices', async (req, res) => {
         const invoice = await Invoice.create({
             user_id: req.user._id,
             invoice_number,
+            customer_name,
+            customer_phone,
+            payment_method: payment_method || 'Cash',
             date,
             time,
             total_amount,
@@ -394,6 +417,9 @@ app.post('/api/invoices', async (req, res) => {
             invoice: {
                 id: invoice._id.toString(),
                 invoice_number,
+                customer_name,
+                customer_phone,
+                payment_method: payment_method || 'Cash',
                 date,
                 time,
                 total_amount,

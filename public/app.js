@@ -9,6 +9,48 @@ const authOverlay = document.getElementById('auth-overlay');
 const loginForm = document.getElementById('login-form');
 const registerForm = document.getElementById('register-form');
 
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.style.padding = '14px 20px';
+    toast.style.borderRadius = '8px';
+    toast.style.color = '#fff';
+    toast.style.fontWeight = '500';
+    toast.style.fontSize = '14px';
+    toast.style.boxShadow = '0 10px 15px -3px rgba(0,0,0,0.1)';
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-20px)';
+    toast.style.transition = 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)';
+    toast.style.display = 'flex';
+    toast.style.alignItems = 'center';
+    toast.style.gap = '10px';
+
+    if (type === 'success') {
+        toast.style.backgroundColor = '#10b981';
+        toast.innerHTML = `<i class='bx bx-check-circle' style='font-size: 20px;'></i> <span>${message}</span>`;
+    } else {
+        toast.style.backgroundColor = '#ef4444';
+        toast.innerHTML = `<i class='bx bx-error-circle' style='font-size: 20px;'></i> <span>${message}</span>`;
+    }
+
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateY(0)';
+    });
+
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-20px)';
+        setTimeout(() => {
+            if (toast.parentElement) toast.parentElement.removeChild(toast);
+        }, 400);
+    }, 4500);
+}
+
 document.getElementById('switch-to-register').addEventListener('click', () => {
     loginForm.classList.remove('active');
     registerForm.classList.add('active');
@@ -36,7 +78,7 @@ loginForm.addEventListener('submit', async (e) => {
         if(!res.ok) throw new Error(data.error || 'Login failed');
         
         loginSuccess(data.token, data.business_name, data.role);
-    } catch(err) { alert(err.message); }
+    } catch(err) { showToast(err.message, 'error'); }
 });
 
 registerForm.addEventListener('submit', async (e) => {
@@ -55,8 +97,9 @@ registerForm.addEventListener('submit', async (e) => {
         const data = await res.json();
         if(!res.ok) throw new Error(data.error || 'Registration failed');
         
-        loginSuccess(data.token, data.business_name, data.role);
-    } catch(err) { alert(err.message); }
+        showToast(data.message, 'success');
+        document.getElementById('switch-to-login').click();
+    } catch(err) { showToast(err.message, 'error'); }
 });
 
 function loginSuccess(token, businessName, role = 'user') {
@@ -86,8 +129,10 @@ function checkAuth() {
         
         if (currentRole === 'admin') {
             document.getElementById('nav-item-admin').style.display = 'block';
+            if (document.getElementById('tab-btn-account')) document.getElementById('tab-btn-account').style.display = 'none';
         } else {
             document.getElementById('nav-item-admin').style.display = 'none';
+            if (document.getElementById('tab-btn-account')) document.getElementById('tab-btn-account').style.display = 'inline-block';
         }
         
         // Re-initialize data
@@ -119,6 +164,8 @@ let currentBill = [];
 let currentTab = 'dashboard-view';
 let chartInstance = null;
 let currentProductImageBase64 = null;
+let html5QrCode = null;
+let isScanTorchOn = false;
 
 // ==== DOM ELEMENTS ====
 const clockEl = document.getElementById('clock');
@@ -132,13 +179,203 @@ const adminUserModal = document.getElementById('admin-user-modal');
 
 // ==== INITIALIZATION ====
 document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
     checkAuth();
     updateClock();
     setInterval(updateClock, 1000);
     
     setupNavigation();
     setupModals();
+    setupPOSTabs();
+    setupBarcodeScanner();
 });
+
+function initTheme() {
+    const savedTheme = localStorage.getItem('pos_theme') || 'light';
+    const btnThemeToggle = document.getElementById('btn-theme-toggle');
+    const toggleIcon = btnThemeToggle.querySelector('i');
+
+    if (savedTheme === 'dark') {
+        document.body.classList.add('dark-mode');
+        toggleIcon.classList.replace('bx-moon', 'bx-sun');
+    }
+
+    btnThemeToggle.addEventListener('click', () => {
+        const isDark = document.body.classList.toggle('dark-mode');
+        if (isDark) {
+            localStorage.setItem('pos_theme', 'dark');
+            toggleIcon.classList.replace('bx-moon', 'bx-sun');
+        } else {
+            localStorage.setItem('pos_theme', 'light');
+            toggleIcon.classList.replace('bx-sun', 'bx-moon');
+        }
+    });
+}
+
+function setupBarcodeScanner() {
+    const barcodeInput = document.getElementById('pos-barcode-input');
+    if (barcodeInput) {
+        barcodeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const barcode = e.target.value.trim();
+                if (barcode) {
+                    const product = products.find(p => p.barcode === barcode);
+                    if (product) {
+                        addToBill(product);
+                        e.target.value = '';
+                    } else {
+                        alert('Product not found with this barcode.');
+                    }
+                }
+            }
+        });
+    }
+
+    // Global listener for physical barcode scanner
+    let barcodeBuffer = '';
+    let barcodeTimer = null;
+    document.addEventListener('keypress', (e) => {
+        if (currentTab !== 'pos-view') return;
+        
+        // Ignore if the user is typing in another input/textarea (except our barcode input)
+        const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+        if (isInput && e.target.id !== 'pos-barcode-input') return;
+
+        if (e.key === 'Enter') {
+            if (barcodeBuffer) {
+                // If they typed in the barcode input, it's handled by its own event, but we can clear buffer
+                if (e.target.id !== 'pos-barcode-input') {
+                    const product = products.find(p => p.barcode === barcodeBuffer);
+                    if (product) {
+                        addToBill(product);
+                    } else {
+                        // Optional: alert('Product not found with this barcode.');
+                    }
+                }
+                barcodeBuffer = '';
+            }
+        } else {
+            barcodeBuffer += e.key;
+            clearTimeout(barcodeTimer);
+            // Barcode scanners type very quickly, within a few milliseconds.
+            barcodeTimer = setTimeout(() => {
+                barcodeBuffer = '';
+            }, 100); 
+        }
+    });
+
+    const btnCamera = document.getElementById('btn-camera-scan');
+    const scannerModal = document.getElementById('scanner-modal');
+    
+    if (btnCamera && scannerModal) {
+        btnCamera.addEventListener('click', () => {
+            showModal(scannerModal);
+            startScanner();
+        });
+
+        document.getElementById('btn-toggle-torch').addEventListener('click', async () => {
+            if (html5QrCode && html5QrCode.getState() === 2) { // 2 = SCANNING
+                try {
+                    isScanTorchOn = !isScanTorchOn;
+                    await html5QrCode.applyVideoConstraints({ advanced: [{ torch: isScanTorchOn }] });
+                    const icon = document.querySelector('#btn-toggle-torch i');
+                    if(isScanTorchOn) {
+                        icon.classList.remove('bx-bolt-circle');
+                        icon.classList.add('bxs-bolt-circle');
+                        icon.style.color = '#fbbf24'; // Yellow lighting
+                    } else {
+                        icon.classList.remove('bxs-bolt-circle');
+                        icon.classList.add('bx-bolt-circle');
+                        icon.style.color = '';
+                    }
+                } catch (err) {
+                    alert('Torch/Flashlight is not supported on this device or camera.');
+                    isScanTorchOn = !isScanTorchOn; // revert state
+                }
+            }
+        });
+
+        document.getElementById('btn-restart-scan').addEventListener('click', () => {
+            if (html5QrCode) {
+                try {
+                    if (html5QrCode.getState() === 2) {
+                        html5QrCode.stop().then(() => {
+                            isScanTorchOn = false;
+                            document.querySelector('#btn-toggle-torch i').classList.replace('bxs-bolt-circle', 'bx-bolt-circle');
+                            document.querySelector('#btn-toggle-torch i').style.color = '';
+                            startScanner();
+                        });
+                    } else {
+                        startScanner();
+                    }
+                } catch(e) { console.error(e); }
+            }
+        });
+    }
+}
+
+function startScanner() {
+    if (!html5QrCode) {
+        // Need to clear reader div just in case it retains weird states
+        document.getElementById('reader').innerHTML = '';
+        html5QrCode = new Html5Qrcode("reader");
+    }
+    
+    if (html5QrCode.getState() === 2) return; // already scanning
+
+    html5QrCode.start(
+        { facingMode: "environment" }, 
+        { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+        (decodedText, decodedResult) => {
+            // Success handler
+            const product = products.find(p => p.barcode === decodedText);
+            if (product) {
+                // Flash success color briefly
+                document.getElementById('reader').style.boxShadow = "inset 0 0 0 10px #10b981";
+                setTimeout(() => { document.getElementById('reader').style.boxShadow = "none"; }, 500);
+                
+                addToBill(product);
+                
+                // Close the modal after successful scan
+                hideModal();
+            } else {
+                document.getElementById('reader').style.boxShadow = "inset 0 0 0 10px #ef4444";
+                setTimeout(() => { document.getElementById('reader').style.boxShadow = "none"; }, 500);
+                // alert(`Scanned barcode ${decodedText} not found in inventory.`);
+            }
+        },
+        (errorMessage) => {
+            // Ignore parse errors as it scans frames without barcodes
+        }
+    ).catch(err => {
+        console.error("Camera access failed", err);
+        alert("Unable to access camera. Please ensure permissions are granted.");
+    });
+}
+
+function setupPOSTabs() {
+    const tabItems = document.getElementById('tab-btn-items');
+    const tabCustomer = document.getElementById('tab-btn-customer');
+    const panelItems = document.getElementById('pos-bill-items');
+    const panelCustomer = document.getElementById('pos-customer-details');
+    
+    if (tabItems && tabCustomer) {
+        tabItems.addEventListener('click', () => {
+            tabItems.classList.add('active');
+            tabCustomer.classList.remove('active');
+            panelItems.style.display = 'block';
+            panelCustomer.style.display = 'none';
+        });
+
+        tabCustomer.addEventListener('click', () => {
+            tabCustomer.classList.add('active');
+            tabItems.classList.remove('active');
+            panelItems.style.display = 'none';
+            panelCustomer.style.display = 'block';
+        });
+    }
+}
 
 function updateClock() {
     const now = new Date();
@@ -189,6 +426,29 @@ function setupNavigation() {
             }
         });
     }
+
+    // ==== DISCONNECT ACCOUNT ====
+    const btnDisconnectTab = document.getElementById('btn-request-disconnect-tab');
+    if (btnDisconnectTab) {
+        btnDisconnectTab.addEventListener('click', async () => {
+            if (confirm('Are you sure you want to request your account to be disconnected/deleted?')) {
+                try {
+                    const res = await fetchAuth(`${API_BASE}/user/request-disconnect`, { method: 'POST' });
+                    const data = await res.json();
+                    if (res.ok) {
+                        alert(data.message);
+                        btnDisconnectTab.disabled = true;
+                        btnDisconnectTab.textContent = 'Disconnect Requested';
+                    } else {
+                        alert(data.error || 'Failed to request disconnection');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert('Error requesting disconnection.');
+                }
+            }
+        });
+    }
 }
 
 function setupModals() {
@@ -200,6 +460,7 @@ function setupModals() {
     document.getElementById('btn-add-product').addEventListener('click', () => {
         document.getElementById('product-form').reset();
         document.getElementById('product-id').value = '';
+        document.getElementById('product-barcode').value = '';
         currentProductImageBase64 = null;
         document.getElementById('product-image-preview').innerHTML = '<span style="color:var(--text-muted);font-size:12px;">+ Add Image</span>';
         document.getElementById('product-modal-title').textContent = 'Add Product';
@@ -252,12 +513,14 @@ function setupModals() {
         e.preventDefault();
         const id = document.getElementById('product-id').value;
         const name = document.getElementById('product-name').value;
+        const barcode = document.getElementById('product-barcode').value;
         const qty = document.getElementById('product-qty').value;
         const cost_price = document.getElementById('product-cost-price').value;
         const price = document.getElementById('product-price').value;
         
         const payload = { 
-            name, 
+            name,
+            barcode,
             quantity: parseInt(qty), 
             cost_price: parseFloat(cost_price) || 0,
             price: parseFloat(price),
@@ -293,12 +556,13 @@ function setupModals() {
         const email = document.getElementById('admin-email').value;
         const whatsapp_number = document.getElementById('admin-whatsapp').value;
         const marketplace_enabled = document.getElementById('admin-marketplace-enabled').checked;
+        const is_active = document.getElementById('admin-is-active').checked;
         
         try {
             await fetchAuth(`${API_BASE}/admin/users/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ business_name, email, whatsapp_number, marketplace_enabled })
+                body: JSON.stringify({ business_name, email, whatsapp_number, marketplace_enabled, is_active })
             });
             hideModal();
             loadAdminUsers();
@@ -318,6 +582,17 @@ function showModal(modal) {
 function hideModal() {
     modalOverlay.classList.remove('active');
     document.querySelectorAll('.modal').forEach(m => m.classList.remove('active'));
+    
+    // Stop the custom barcode camera stream
+    if (html5QrCode && html5QrCode.getState() === 2) {
+        html5QrCode.stop().then(() => {
+            isScanTorchOn = false;
+            try {
+                document.querySelector('#btn-toggle-torch i').classList.replace('bxs-bolt-circle', 'bx-bolt-circle');
+                document.querySelector('#btn-toggle-torch i').style.color = '';
+            } catch(e){}
+        }).catch(err => console.error(err));
+    }
 }
 
 // ==== UTILS ====
@@ -470,6 +745,7 @@ function editProduct(id) {
     if(p) {
         document.getElementById('product-id').value = p.id;
         document.getElementById('product-name').value = p.name;
+        document.getElementById('product-barcode').value = p.barcode || '';
         document.getElementById('product-qty').value = p.quantity;
         document.getElementById('product-cost-price').value = p.cost_price || 0;
         document.getElementById('product-price').value = p.price;
@@ -581,6 +857,14 @@ function updateBillQuantity(id, change) {
     }
 }
 
+function updateBillPrice(id, newPrice) {
+    const item = currentBill.find(i => i.id === id);
+    if (item) {
+        item.price = parseFloat(newPrice) || 0;
+        updateBillUI();
+    }
+}
+
 function updateBillUI() {
     const itemsContainer = document.getElementById('pos-bill-items');
     itemsContainer.innerHTML = '';
@@ -595,7 +879,12 @@ function updateBillUI() {
         div.innerHTML = `
             <div class="bill-item-details">
                 <h4>${item.name}</h4>
-                <p>${formatCurrency(item.price)} x ${item.quantity}</p>
+                <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                    <input type="number" step="0.01" value="${item.price}" 
+                           onchange="updateBillPrice('${item.id}', this.value)" 
+                           style="width:80px; padding:4px; font-size:13px; border:1px solid var(--border); border-radius:4px;"> 
+                    <span style="font-size:13px; color:var(--text-muted)">x ${item.quantity}</span>
+                </div>
             </div>
             <div class="bill-item-actions">
                 <div class="qty-control">
@@ -620,9 +909,16 @@ document.getElementById('btn-submit-bill').addEventListener('click', async () =>
     
     let total = currentBill.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     
+    const customer_name = document.getElementById('pos-customer-name').value;
+    const customer_phone = document.getElementById('pos-customer-phone').value;
+    const payment_method = document.getElementById('pos-payment-method').value;
+    
     const payload = {
         items: currentBill,
-        total_amount: total
+        total_amount: total,
+        customer_name,
+        customer_phone,
+        payment_method
     };
     
     try {
@@ -641,6 +937,9 @@ document.getElementById('btn-submit-bill').addEventListener('click', async () =>
         
         // Clear bill
         currentBill = [];
+        document.getElementById('pos-customer-name').value = '';
+        document.getElementById('pos-customer-phone').value = '';
+        document.getElementById('pos-payment-method').value = 'Cash';
         updateBillUI();
         
         // Reload products cache
@@ -656,6 +955,25 @@ function showInvoicePrintout(invoice) {
     document.getElementById('receipt-no').textContent = invoice.invoice_number;
     document.getElementById('receipt-date').textContent = invoice.date;
     document.getElementById('receipt-time').textContent = invoice.time;
+    document.getElementById('receipt-payment-method').textContent = invoice.payment_method || 'Cash';
+    
+    if (invoice.customer_name || invoice.customer_phone) {
+        if (invoice.customer_name) {
+            document.getElementById('receipt-customer-row').style.display = 'block';
+            document.getElementById('receipt-customer-name').textContent = invoice.customer_name;
+        } else {
+            document.getElementById('receipt-customer-row').style.display = 'none';
+        }
+        if (invoice.customer_phone) {
+            document.getElementById('receipt-phone-row').style.display = 'block';
+            document.getElementById('receipt-customer-phone').textContent = invoice.customer_phone;
+        } else {
+            document.getElementById('receipt-phone-row').style.display = 'none';
+        }
+    } else {
+        document.getElementById('receipt-customer-row').style.display = 'none';
+        document.getElementById('receipt-phone-row').style.display = 'none';
+    }
     
     const tbody = document.querySelector('#receipt-items tbody');
     tbody.innerHTML = '';
@@ -780,12 +1098,25 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         document.querySelectorAll('.tab-btn').forEach(td => td.classList.remove('active'));
         e.target.classList.add('active');
         currentReportMode = e.target.getAttribute('data-report');
-        loadReports();
+        
+        const tableContainer = document.getElementById('reports-table-container');
+        const accContainer = document.getElementById('reports-account-container');
+        
+        if (currentReportMode === 'account') {
+            if (tableContainer) tableContainer.style.display = 'none';
+            if (accContainer) accContainer.style.display = 'block';
+        } else {
+            if (tableContainer) tableContainer.style.display = 'block';
+            if (accContainer) accContainer.style.display = 'none';
+            loadReports();
+        }
     });
 });
 
 async function loadReports() {
-    const thead = document.querySelector('#reports-table document, #reports-table thead');
+    if (currentReportMode === 'account') return; // Don't fetch data for account tab
+    
+    const thead = document.querySelector('#reports-table thead');
     const tbody = document.querySelector('#reports-table tbody');
     tbody.innerHTML = '';
     
@@ -827,10 +1158,14 @@ async function loadAdminUsers() {
         
         adminUsersList.forEach(user => {
             const tr = document.createElement('tr');
+            const disconnectBadge = user.delete_request ? '<br><span class="text-danger" style="font-size:11px;font-weight:bold;color:#ef4444;">[Disconnect Requested]</span>' : '';
             tr.innerHTML = `
-                <td>${user.business_name}</td>
+                <td>${user.business_name} ${disconnectBadge}</td>
                 <td>${user.email}</td>
-                <td>${user.marketplace_enabled ? '<span class="text-success" style="color:var(--success);font-weight:600;">Enabled</span>' : '<span class="text-muted">Disabled</span>'}</td>
+                <td>
+                    <div style="font-size:12px; margin-bottom:4px;">Marketplace: ${user.marketplace_enabled ? '<span class="text-success" style="color:var(--success);font-weight:600;">Enabled</span>' : '<span class="text-muted">Disabled</span>'}</div>
+                    <div style="font-size:12px;">Account: ${user.is_active ? '<span class="text-success" style="color:var(--success);font-weight:600;">Active</span>' : '<span class="text-danger" style="color:var(--danger);font-weight:600;">Pending approval</span>'}</div>
+                </td>
                 <td>
                     <button class="btn btn-outline btn-icon-only view-user-inventory-btn" data-id="${user.id}" title="View Inventory"><i class='bx bx-box'></i></button>
                     <button class="btn btn-outline btn-icon-only admin-edit-btn" data-id="${user.id}" title="Edit User"><i class='bx bx-edit'></i></button>
@@ -877,6 +1212,7 @@ document.querySelector('#admin-users-table tbody').addEventListener('click', asy
             document.getElementById('admin-email').value = user.email;
             document.getElementById('admin-whatsapp').value = user.whatsapp_number || '';
             document.getElementById('admin-marketplace-enabled').checked = user.marketplace_enabled;
+            document.getElementById('admin-is-active').checked = user.is_active;
             showModal(adminUserModal);
         }
         return;
