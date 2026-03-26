@@ -205,7 +205,7 @@ let chartInstance = null;
 let currentProductImageBase64 = null;
 let html5QrCode = null;
 let isScanTorchOn = false;
-let currentScanMode = 'billing'; // 'billing' or 'addProduct'
+let currentScanMode = 'billing'; // 'billing', 'addProduct', or 'inventorySearch'
 
 // ==== DOM ELEMENTS ====
 const clockEl = document.getElementById('clock');
@@ -228,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupModals();
     setupPOSTabs();
     setupBarcodeScanner();
+    setupInventorySearch();
 });
 
 function initTheme() {
@@ -276,37 +277,53 @@ function setupBarcodeScanner() {
     let barcodeBuffer = '';
     let barcodeTimer = null;
     document.addEventListener('keypress', (e) => {
-        if (currentTab !== 'pos-view') return;
-        
-        // Ignore if the user is typing in another input/textarea (except our barcode input)
-        const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
-        if (isInput && e.target.id !== 'pos-barcode-input') return;
+        if (currentTab === 'pos-view') {
+            // Ignore if the user is typing in another input/textarea (except our barcode input)
+            const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+            if (isInput && e.target.id !== 'pos-barcode-input') return;
 
-        if (e.key === 'Enter') {
-            if (barcodeBuffer) {
-                // If they typed in the barcode input, it's handled by its own event, but we can clear buffer
-                if (e.target.id !== 'pos-barcode-input') {
-                    const product = products.find(p => p.barcode === barcodeBuffer);
-                    if (product) {
-                        addToBill(product);
-                    } else {
-                        // Optional: alert('Product not found with this barcode.');
+            if (e.key === 'Enter') {
+                if (barcodeBuffer) {
+                    if (e.target.id !== 'pos-barcode-input') {
+                        const product = products.find(p => p.barcode === barcodeBuffer);
+                        if (product) {
+                            addToBill(product);
+                        }
                     }
+                    barcodeBuffer = '';
                 }
-                barcodeBuffer = '';
+            } else {
+                barcodeBuffer += e.key;
+                clearTimeout(barcodeTimer);
+                barcodeTimer = setTimeout(() => {
+                    barcodeBuffer = '';
+                }, 100); 
             }
-        } else {
-            barcodeBuffer += e.key;
-            clearTimeout(barcodeTimer);
-            // Barcode scanners type very quickly, within a few milliseconds.
-            barcodeTimer = setTimeout(() => {
-                barcodeBuffer = '';
-            }, 100); 
+        } else if (currentTab === 'inventory-view') {
+            const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+            if (isInput && e.target.id !== 'inventory-barcode-input') return;
+
+            if (e.key === 'Enter') {
+                if (barcodeBuffer) {
+                    if (e.target.id !== 'inventory-barcode-input') {
+                        document.getElementById('inventory-barcode-input').value = barcodeBuffer;
+                        loadInventory(barcodeBuffer);
+                    }
+                    barcodeBuffer = '';
+                }
+            } else {
+                barcodeBuffer += e.key;
+                clearTimeout(barcodeTimer);
+                barcodeTimer = setTimeout(() => {
+                    barcodeBuffer = '';
+                }, 100);
+            }
         }
     });
 
     const btnCamera = document.getElementById('btn-camera-scan');
     const btnCameraProduct = document.getElementById('btn-camera-scan-product');
+    const btnCameraInventory = document.getElementById('btn-camera-scan-inventory');
     const scannerModal = document.getElementById('scanner-modal');
     
     if (btnCamera && scannerModal) {
@@ -325,6 +342,14 @@ function setupBarcodeScanner() {
         });
     }
 
+    if (btnCameraInventory && scannerModal) {
+        btnCameraInventory.addEventListener('click', () => {
+            currentScanMode = 'inventorySearch';
+            showModal(scannerModal);
+            startScanner();
+        });
+    }
+
     const productBarcodeInput = document.getElementById('product-barcode');
     if (productBarcodeInput) {
         productBarcodeInput.addEventListener('keydown', (e) => {
@@ -334,7 +359,7 @@ function setupBarcodeScanner() {
         });
     }
 
-    if ((btnCamera || btnCameraProduct) && scannerModal) {
+    if ((btnCamera || btnCameraProduct || btnCameraInventory) && scannerModal) {
         document.getElementById('btn-toggle-torch').addEventListener('click', async () => {
             if (html5QrCode && html5QrCode.getState() === 2) { // 2 = SCANNING
                 try {
@@ -398,6 +423,15 @@ function startScanner() {
                 return;
             }
 
+            if (currentScanMode === 'inventorySearch') {
+                document.getElementById('reader').style.boxShadow = "inset 0 0 0 10px #10b981";
+                setTimeout(() => { document.getElementById('reader').style.boxShadow = "none"; }, 500);
+                document.getElementById('inventory-barcode-input').value = decodedText;
+                loadInventory(decodedText);
+                hideModal();
+                return;
+            }
+
             const product = products.find(p => p.barcode === decodedText);
             if (product) {
                 // Flash success color briefly
@@ -446,6 +480,24 @@ function setupPOSTabs() {
     }
 }
 
+function setupInventorySearch() {
+    const inventoryBarcodeInput = document.getElementById('inventory-barcode-input');
+    if (inventoryBarcodeInput) {
+        inventoryBarcodeInput.addEventListener('input', (e) => {
+            const barcode = e.target.value.trim();
+            loadInventory(barcode);
+        });
+        
+        inventoryBarcodeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const barcode = e.target.value.trim();
+                loadInventory(barcode);
+            }
+        });
+    }
+}
+
 function updateClock() {
     const now = new Date();
     clockEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' - ' + now.toLocaleDateString();
@@ -467,7 +519,11 @@ function setupNavigation() {
             
             // Load specific view data
             if(target === 'dashboard-view') loadDashboard();
-            if(target === 'inventory-view') loadInventory();
+            if(target === 'inventory-view') {
+                const invInput = document.getElementById('inventory-barcode-input');
+                if (invInput) invInput.value = '';
+                loadInventory();
+            }
             if(target === 'pos-view') loadPOS();
             if(target === 'invoices-view') loadInvoices();
             if(target === 'reports-view') loadReports();
@@ -745,7 +801,7 @@ async function loadDashboard() {
 // ==== INVENTORY ====
 let adminInventoryFilter = null;
 
-async function loadInventory() {
+async function loadInventory(searchBarcode = '') {
     try {
         const res = await fetchAuth(`${API_BASE}/products`);
         products = await res.json();
@@ -761,6 +817,15 @@ async function loadInventory() {
             filterBadge.style.display = 'flex';
         } else {
             filterBadge.style.display = 'none';
+        }
+
+        // Apply barcode search filter if provided
+        if (searchBarcode) {
+            const lowerSearch = searchBarcode.toLowerCase();
+            productsToRender = productsToRender.filter(p => 
+                (p.barcode && p.barcode.toLowerCase().includes(lowerSearch)) ||
+                (p.name && p.name.toLowerCase().includes(lowerSearch))
+            );
         }
         
         productsToRender.forEach(p => {
