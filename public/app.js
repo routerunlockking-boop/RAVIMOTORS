@@ -916,6 +916,8 @@ async function loadPOS() {
     currentBill = [];
     updateBillUI();
     document.getElementById('pos-search-input').value = '';
+    document.getElementById('pos-amount-paid').value = '';
+    calculateBalance();
     
     try {
         const res = await fetchAuth(`${API_BASE}/products`);
@@ -1033,7 +1035,19 @@ function updateBillUI() {
     });
     
     document.getElementById('pos-total-amount').textContent = formatCurrency(total);
+    calculateBalance();
 }
+
+function calculateBalance() {
+    const totalText = document.getElementById('pos-total-amount').textContent;
+    const total = parseFloat(totalText.replace(/[^\d.]/g, '')) || 0;
+    const paid = parseFloat(document.getElementById('pos-amount-paid').value) || 0;
+    const balance = paid > 0 ? paid - total : 0;
+    
+    document.getElementById('pos-balance-amount').textContent = formatCurrency(balance);
+}
+
+document.getElementById('pos-amount-paid').addEventListener('input', calculateBalance);
 
 document.getElementById('btn-submit-bill').addEventListener('click', async () => {
     if (currentBill.length === 0) {
@@ -1046,13 +1060,15 @@ document.getElementById('btn-submit-bill').addEventListener('click', async () =>
     const customer_name = document.getElementById('pos-customer-name').value;
     const customer_phone = document.getElementById('pos-customer-phone').value;
     const payment_method = document.getElementById('pos-payment-method').value;
+    const amount_paid = parseFloat(document.getElementById('pos-amount-paid').value) || 0;
     
     const payload = {
         items: currentBill,
         total_amount: total,
         customer_name,
         customer_phone,
-        payment_method
+        payment_method,
+        amount_paid
     };
     
     try {
@@ -1067,13 +1083,14 @@ document.getElementById('btn-submit-bill').addEventListener('click', async () =>
         const data = await res.json();
         
         // Print
-        showInvoicePrintout(data.invoice);
+        showInvoicePrintout({ ...data.invoice, amount_paid });
         
         // Clear bill
         currentBill = [];
         document.getElementById('pos-customer-name').value = '';
         document.getElementById('pos-customer-phone').value = '';
         document.getElementById('pos-payment-method').value = 'Cash';
+        document.getElementById('pos-amount-paid').value = '';
         updateBillUI();
         
         // Reload products cache
@@ -1128,6 +1145,13 @@ function showInvoicePrintout(invoice) {
     });
     
     document.getElementById('receipt-total-amount').textContent = total.toFixed(2);
+    
+    // Payment details
+    const amountPaid = invoice.amount_paid || 0;
+    const balance = amountPaid > 0 ? amountPaid - total : 0;
+    
+    document.getElementById('receipt-paid-amount').textContent = amountPaid.toFixed(2);
+    document.getElementById('receipt-balance-amount').textContent = balance.toFixed(2);
     
     // Automatically open modal and print dialog as per rules
     showModal(invoiceModal);
