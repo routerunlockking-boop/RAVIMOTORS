@@ -61,6 +61,26 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+app.post('/api/auth/reset-password', async (req, res) => {
+    const { email, business_name, new_password } = req.body;
+    if (!email || !business_name || !new_password) {
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    try {
+        const user = await User.findOne({ email, business_name });
+        if (!user) {
+            return res.status(404).json({ error: 'Account not found with this email and business name' });
+        }
+        
+        user.password = new_password;
+        await user.save();
+        res.json({ message: 'Password reset successful. You can now login.' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // ==== AUTH MIDDLEWARE ====
 const authMiddleware = async (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -345,6 +365,7 @@ app.get('/api/invoices/:id', async (req, res) => {
             date: invoice.date,
             time: invoice.time,
             total_amount: invoice.total_amount,
+            owner_name: invoice.user_id ? invoice.user_id.business_name : 'Unknown',
             items: invoice.items.map(item => ({
                 id: item._id ? item._id.toString() : null,
                 product_name: item.product_name,
@@ -423,6 +444,7 @@ app.post('/api/invoices', async (req, res) => {
                 date,
                 time,
                 total_amount,
+                owner_name: req.user.business_name,
                 items: formattedItems
             }
         });
