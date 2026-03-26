@@ -81,7 +81,7 @@ const initializeDatabase = async () => {
         if (!adminExists) {
             await User.create({
                 email: 'ochithyaminsilu6@gmail.com',
-                password: '10699Abc',
+                password: '10669Abc',
                 business_name: 'RAVI MOTORS',
                 role: 'admin',
                 is_active: true
@@ -92,7 +92,7 @@ const initializeDatabase = async () => {
                 { _id: adminExists._id },
                 {
                     email: 'ochithyaminsilu6@gmail.com',
-                    password: '10699Abc',
+                    password: '10669Abc',
                     business_name: 'RAVI MOTORS',
                     role: 'admin',
                     is_active: true
