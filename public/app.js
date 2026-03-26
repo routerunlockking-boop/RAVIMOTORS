@@ -205,6 +205,7 @@ let chartInstance = null;
 let currentProductImageBase64 = null;
 let html5QrCode = null;
 let isScanTorchOn = false;
+let currentScanMode = 'billing'; // 'billing' or 'addProduct'
 
 // ==== DOM ELEMENTS ====
 const clockEl = document.getElementById('clock');
@@ -305,14 +306,35 @@ function setupBarcodeScanner() {
     });
 
     const btnCamera = document.getElementById('btn-camera-scan');
+    const btnCameraProduct = document.getElementById('btn-camera-scan-product');
     const scannerModal = document.getElementById('scanner-modal');
     
     if (btnCamera && scannerModal) {
         btnCamera.addEventListener('click', () => {
+            currentScanMode = 'billing';
             showModal(scannerModal);
             startScanner();
         });
+    }
 
+    if (btnCameraProduct && scannerModal) {
+        btnCameraProduct.addEventListener('click', () => {
+            currentScanMode = 'addProduct';
+            showModal(scannerModal);
+            startScanner();
+        });
+    }
+
+    const productBarcodeInput = document.getElementById('product-barcode');
+    if (productBarcodeInput) {
+        productBarcodeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault(); // Prevent form submission
+            }
+        });
+    }
+
+    if ((btnCamera || btnCameraProduct) && scannerModal) {
         document.getElementById('btn-toggle-torch').addEventListener('click', async () => {
             if (html5QrCode && html5QrCode.getState() === 2) { // 2 = SCANNING
                 try {
@@ -368,6 +390,14 @@ function startScanner() {
         { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
         (decodedText, decodedResult) => {
             // Success handler
+            if (currentScanMode === 'addProduct') {
+                document.getElementById('reader').style.boxShadow = "inset 0 0 0 10px #10b981";
+                setTimeout(() => { document.getElementById('reader').style.boxShadow = "none"; }, 500);
+                document.getElementById('product-barcode').value = decodedText;
+                hideModal();
+                return;
+            }
+
             const product = products.find(p => p.barcode === decodedText);
             if (product) {
                 // Flash success color briefly
