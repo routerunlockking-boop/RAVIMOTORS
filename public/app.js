@@ -205,7 +205,7 @@ let chartInstance = null;
 let currentProductImageBase64 = null;
 let html5QrCode = null;
 let isScanTorchOn = false;
-let currentScanMode = 'billing'; // 'billing', 'addProduct', or 'inventorySearch'
+let currentScanMode = 'billing'; // 'billing' or 'addProduct'
 
 // ==== DOM ELEMENTS ====
 const clockEl = document.getElementById('clock');
@@ -228,7 +228,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setupModals();
     setupPOSTabs();
     setupBarcodeScanner();
-    setupInventorySearch();
 });
 
 function initTheme() {
@@ -257,67 +256,112 @@ function setupBarcodeScanner() {
     const barcodeInput = document.getElementById('pos-barcode-input');
     if (barcodeInput) {
         barcodeInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                const barcode = e.target.value.trim();
-                if (barcode) {
-                    const product = products.find(p => p.barcode === barcode);
-                    if (product) {
-                        addToBill(product);
-                        e.target.value = '';
-                    } else {
-                        alert('Product not found with this barcode.');
-                    }
-                }
-            }
+            if (e.key === 'Enter') e.preventDefault();
         });
     }
 
     // Global listener for physical barcode scanner
     let barcodeBuffer = '';
     let barcodeTimer = null;
-    document.addEventListener('keypress', (e) => {
-        if (currentTab === 'pos-view') {
-            // Ignore if the user is typing in another input/textarea (except our barcode input)
-            const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
-            if (isInput && e.target.id !== 'pos-barcode-input') return;
+    let lastKeyTime = Date.now();
 
-            if (e.key === 'Enter') {
-                if (barcodeBuffer) {
-                    if (e.target.id !== 'pos-barcode-input') {
-                        const product = products.find(p => p.barcode === barcodeBuffer);
-                        if (product) {
+    document.addEventListener('keydown', (e) => {
+        const isProductModalActive = productModal && productModal.classList.contains('active');
+        const isPosView = currentTab === 'pos-view';
+        const isInventoryView = currentTab === 'inventory-view';
+        
+        const now = Date.now();
+        const interval = now - lastKeyTime;
+        lastKeyTime = now;
+
+        const activeEl = document.activeElement;
+        const isBarcodeField = activeEl.id === 'pos-barcode-input' || activeEl.id === 'product-barcode' || activeEl.id === 'inventory-barcode-input';
+        const isOtherInput = (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && !isBarcodeField;
+
+        // Collect characters
+        if (e.key.length === 1) {
+            // If it's a fast sequence, it's a scanner. 
+            barcodeBuffer += e.key;
+            
+            // If it's fast and we are in an input that isn't the barcode field, prevent it
+            if (interval < 50 && isOtherInput) {
+                e.preventDefault();
+            }
+
+            clearTimeout(barcodeTimer);
+            barcodeTimer = setTimeout(() => {
+                barcodeBuffer = '';
+            }, 500); // Increased slightly for slower hardware
+        } 
+        
+        if (e.key === 'Enter' || e.key === 'Tab') {
+            // Priority: buffer (from scanner) > input value (if manually typed)
+            let finalBarcode = barcodeBuffer.trim();
+            if (!finalBarcode && isBarcodeField) {
+                finalBarcode = activeEl.value.trim();
+            }
+
+            if (finalBarcode) {
+                e.preventDefault();
+                
+                // We clear buffer immediately to prevent double-processing 
+                // but keep the value in finalBarcode
+                barcodeBuffer = '';
+                clearTimeout(barcodeTimer);
+
+                if (isProductModalActive) {
+                    const pBarcodeInput = document.getElementById('product-barcode');
+                    if (pBarcodeInput) {
+                        pBarcodeInput.value = finalBarcode;
+                        pBarcodeInput.dispatchEvent(new Event('input'));
+                        pBarcodeInput.dispatchEvent(new Event('change'));
+                        
+                        pBarcodeInput.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
+                        setTimeout(() => pBarcodeInput.style.backgroundColor = '', 500);
+                    }
+                } else if (isPosView || isInventoryView) {
+                    const product = products.find(p => p.barcode === finalBarcode);
+                    if (product) {
+                        if (isPosView) {
                             addToBill(product);
+                            if (activeEl.id === 'pos-barcode-input') activeEl.value = '';
+                        } else {
+                            editProduct(product.id);
+                            if (activeEl.id === 'inventory-barcode-input') activeEl.value = '';
                         }
+                    } else {
+                        openAddProductModal(finalBarcode);
+                        if (activeEl.id === 'pos-barcode-input' || activeEl.id === 'inventory-barcode-input') activeEl.value = '';
                     }
-                    barcodeBuffer = '';
-                }
-            } else {
-                barcodeBuffer += e.key;
-                clearTimeout(barcodeTimer);
-                barcodeTimer = setTimeout(() => {
-                    barcodeBuffer = '';
-                }, 100); 
-            }
-        } else if (currentTab === 'inventory-view') {
-            const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
-            if (isInput && e.target.id !== 'inventory-barcode-input') return;
+                } else {
+                    // Switch to inventory for other views
+                    if (!isInventoryView) {
+                        navLinks.forEach(l => l.classList.remove('active'));
+                        const invLink = document.querySelector('[data-target="inventory-view"]');
+                        if (invLink) invLink.classList.add('active');
+                        
+                        views.forEach(v => v.classList.remove('active'));
+                        const invView = document.getElementById('inventory-view');
+                        if (invView) invView.classList.add('active');
+                        
+                        pageTitle.textContent = "Inventory";
+                        currentTab = 'inventory-view';
+                        loadInventory();
+                    }
 
-            if (e.key === 'Enter') {
-                if (barcodeBuffer) {
-                    if (e.target.id !== 'inventory-barcode-input') {
-                        document.getElementById('inventory-barcode-input').value = barcodeBuffer;
-                        loadInventory(barcodeBuffer);
-                    }
-                    barcodeBuffer = '';
+                    // Small delay to ensure inventory is loaded if we just switched
+                    setTimeout(() => {
+                        const product = products.find(p => p.barcode === finalBarcode);
+                        if (product) {
+                            editProduct(product.id);
+                        } else {
+                            openAddProductModal(finalBarcode);
+                        }
+                    }, isInventoryView ? 0 : 100);
                 }
-            } else {
-                barcodeBuffer += e.key;
-                clearTimeout(barcodeTimer);
-                barcodeTimer = setTimeout(() => {
-                    barcodeBuffer = '';
-                }, 100);
             }
+            // Always clear buffer
+            barcodeBuffer = '';
         }
     });
 
@@ -344,7 +388,7 @@ function setupBarcodeScanner() {
 
     if (btnCameraInventory && scannerModal) {
         btnCameraInventory.addEventListener('click', () => {
-            currentScanMode = 'inventorySearch';
+            currentScanMode = 'inventory';
             showModal(scannerModal);
             startScanner();
         });
@@ -359,7 +403,7 @@ function setupBarcodeScanner() {
         });
     }
 
-    if ((btnCamera || btnCameraProduct || btnCameraInventory) && scannerModal) {
+    if ((btnCamera || btnCameraProduct) && scannerModal) {
         document.getElementById('btn-toggle-torch').addEventListener('click', async () => {
             if (html5QrCode && html5QrCode.getState() === 2) { // 2 = SCANNING
                 try {
@@ -423,12 +467,17 @@ function startScanner() {
                 return;
             }
 
-            if (currentScanMode === 'inventorySearch') {
+            if (currentScanMode === 'inventory') {
                 document.getElementById('reader').style.boxShadow = "inset 0 0 0 10px #10b981";
                 setTimeout(() => { document.getElementById('reader').style.boxShadow = "none"; }, 500);
-                document.getElementById('inventory-barcode-input').value = decodedText;
-                loadInventory(decodedText);
+                
+                const product = products.find(p => p.barcode === decodedText);
                 hideModal();
+                if (product) {
+                    editProduct(product.id);
+                } else {
+                    openAddProductModal(decodedText);
+                }
                 return;
             }
 
@@ -444,8 +493,11 @@ function startScanner() {
                 hideModal();
             } else {
                 document.getElementById('reader').style.boxShadow = "inset 0 0 0 10px #ef4444";
-                setTimeout(() => { document.getElementById('reader').style.boxShadow = "none"; }, 500);
-                // alert(`Scanned barcode ${decodedText} not found in inventory.`);
+                setTimeout(() => { 
+                    document.getElementById('reader').style.boxShadow = "none";
+                    hideModal();
+                    openAddProductModal(decodedText);
+                }, 500);
             }
         },
         (errorMessage) => {
@@ -459,43 +511,33 @@ function startScanner() {
 
 function setupPOSTabs() {
     const tabItems = document.getElementById('tab-btn-items');
+    const tabCashier = document.getElementById('tab-btn-cashier');
     const tabCustomer = document.getElementById('tab-btn-customer');
+    
     const panelItems = document.getElementById('pos-bill-items');
+    const panelCashier = document.getElementById('pos-cashier-details');
     const panelCustomer = document.getElementById('pos-customer-details');
     
-    if (tabItems && tabCustomer) {
-        tabItems.addEventListener('click', () => {
-            tabItems.classList.add('active');
-            tabCustomer.classList.remove('active');
-            panelItems.style.display = 'block';
-            panelCustomer.style.display = 'none';
-        });
-
-        tabCustomer.addEventListener('click', () => {
-            tabCustomer.classList.add('active');
-            tabItems.classList.remove('active');
-            panelItems.style.display = 'none';
-            panelCustomer.style.display = 'block';
-        });
-    }
-}
-
-function setupInventorySearch() {
-    const inventoryBarcodeInput = document.getElementById('inventory-barcode-input');
-    if (inventoryBarcodeInput) {
-        inventoryBarcodeInput.addEventListener('input', (e) => {
-            const barcode = e.target.value.trim();
-            loadInventory(barcode);
-        });
-        
-        inventoryBarcodeInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                const barcode = e.target.value.trim();
-                loadInventory(barcode);
-            }
-        });
-    }
+    const tabs = [tabItems, tabCashier, tabCustomer];
+    const panels = [panelItems, panelCashier, panelCustomer];
+    
+    tabs.forEach((tab, index) => {
+        if (tab) {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => {
+                    t.classList.remove('active');
+                    t.style.color = 'var(--text-muted)';
+                    t.style.fontWeight = '500';
+                });
+                panels.forEach(p => p.style.display = 'none');
+                
+                tab.classList.add('active');
+                tab.style.color = 'var(--primary)';
+                tab.style.fontWeight = '600';
+                panels[index].style.display = 'block';
+            });
+        }
+    });
 }
 
 function updateClock() {
@@ -519,11 +561,7 @@ function setupNavigation() {
             
             // Load specific view data
             if(target === 'dashboard-view') loadDashboard();
-            if(target === 'inventory-view') {
-                const invInput = document.getElementById('inventory-barcode-input');
-                if (invInput) invInput.value = '';
-                loadInventory();
-            }
+            if(target === 'inventory-view') loadInventory();
             if(target === 'pos-view') loadPOS();
             if(target === 'invoices-view') loadInvoices();
             if(target === 'reports-view') loadReports();
@@ -576,21 +614,39 @@ function setupNavigation() {
     }
 }
 
+function openAddProductModal(barcode = '') {
+    const form = document.getElementById('product-form');
+    form.reset();
+    document.getElementById('product-id').value = '';
+    currentProductImageBase64 = null;
+    document.getElementById('product-image-preview').innerHTML = '<span style="color:var(--text-muted);font-size:12px;">+ Add Image</span>';
+    document.getElementById('product-modal-title').textContent = 'Add Product';
+    
+    // Set barcode after reset
+    if (barcode) {
+        document.getElementById('product-barcode').value = barcode;
+    }
+    
+    showModal(productModal);
+    
+    // Focus and highlight
+    setTimeout(() => {
+        const input = document.getElementById('product-barcode');
+        input.focus();
+        if (barcode) {
+            input.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
+            setTimeout(() => input.style.backgroundColor = '', 500);
+        }
+    }, 150);
+}
+
 function setupModals() {
     document.getElementById('btn-close-modal').addEventListener('click', hideModal);
     document.getElementById('btn-close-invoice-modal').addEventListener('click', hideModal);
     document.getElementById('btn-close-admin-modal').addEventListener('click', hideModal);
     
     // Add product
-    document.getElementById('btn-add-product').addEventListener('click', () => {
-        document.getElementById('product-form').reset();
-        document.getElementById('product-id').value = '';
-        document.getElementById('product-barcode').value = '';
-        currentProductImageBase64 = null;
-        document.getElementById('product-image-preview').innerHTML = '<span style="color:var(--text-muted);font-size:12px;">+ Add Image</span>';
-        document.getElementById('product-modal-title').textContent = 'Add Product';
-        showModal(productModal);
-    });
+    document.getElementById('btn-add-product').addEventListener('click', () => openAddProductModal());
 
     // Handle Image Selection
     document.getElementById('product-image').addEventListener('change', function(e) {
@@ -801,58 +857,51 @@ async function loadDashboard() {
 // ==== INVENTORY ====
 let adminInventoryFilter = null;
 
-async function loadInventory(searchBarcode = '') {
+async function loadInventory() {
     try {
         const res = await fetchAuth(`${API_BASE}/products`);
         products = await res.json();
-        const tbody = document.querySelector('#inventory-table tbody');
-        tbody.innerHTML = '';
-        
-        // Handle admin inventory filtering
-        let productsToRender = products;
-        const filterBadge = document.getElementById('inventory-filter-badge');
-        if (currentRole === 'admin' && adminInventoryFilter) {
-            productsToRender = products.filter(p => p.owner_name === adminInventoryFilter);
-            document.getElementById('inventory-filter-name').textContent = adminInventoryFilter;
-            filterBadge.style.display = 'flex';
-        } else {
-            filterBadge.style.display = 'none';
-        }
-
-        // Apply barcode search filter if provided
-        if (searchBarcode) {
-            const lowerSearch = searchBarcode.toLowerCase();
-            productsToRender = productsToRender.filter(p => 
-                (p.barcode && p.barcode.toLowerCase().includes(lowerSearch)) ||
-                (p.name && p.name.toLowerCase().includes(lowerSearch))
-            );
-        }
-        
-        productsToRender.forEach(p => {
-            const imgHtml = p.image ? `<img src="${p.image}" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : `<div style="width:40px;height:40px;border-radius:8px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#64748b;">No Img</div>`;
-            const tr = document.createElement('tr');
-            
-            let nameDisplay = `<span>${p.name}</span>`;
-            if (currentRole === 'admin') {
-                nameDisplay = `<div><span>${p.name}</span><div style="font-size:11px;color:var(--primary);margin-top:2px;">[${p.owner_name}]</div></div>`;
-            }
-            
-            tr.innerHTML = `
-                <td style="display:flex;align-items:center;gap:12px;">${imgHtml} ${nameDisplay}</td>
-                <td class="${p.quantity <= 10 ? 'text-danger' : ''}">${p.quantity}</td>
-                <td>${formatCurrency(p.cost_price || 0)}</td>
-                <td>${formatCurrency(p.price)}</td>
-                <td>
-                    <button class="btn btn-outline btn-icon-only edit-btn" data-id="${p.id}"><i class='bx bx-edit'></i></button>
-                    <button class="btn btn-danger btn-icon-only del-btn" data-id="${p.id}"><i class='bx bx-trash'></i></button>
-                </td>
-            `;
-            tbody.appendChild(tr);
-        });
-        
+        renderInventory(products);
     } catch (err) {
         console.error(err);
     }
+}
+
+function renderInventory(productsToRender) {
+    const tbody = document.querySelector('#inventory-table tbody');
+    tbody.innerHTML = '';
+    
+    // Handle admin inventory filtering
+    const filterBadge = document.getElementById('inventory-filter-badge');
+    if (currentRole === 'admin' && adminInventoryFilter) {
+        productsToRender = productsToRender.filter(p => p.owner_name === adminInventoryFilter);
+        document.getElementById('inventory-filter-name').textContent = adminInventoryFilter;
+        filterBadge.style.display = 'flex';
+    } else {
+        filterBadge.style.display = 'none';
+    }
+    
+    productsToRender.forEach(p => {
+        const imgHtml = p.image ? `<img src="${p.image}" style="width:40px;height:40px;border-radius:8px;object-fit:cover;">` : `<div style="width:40px;height:40px;border-radius:8px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#64748b;">No Img</div>`;
+        const tr = document.createElement('tr');
+        
+        let nameDisplay = `<span>${p.name}</span>`;
+        if (currentRole === 'admin') {
+            nameDisplay = `<div><span>${p.name}</span><div style="font-size:11px;color:var(--primary);margin-top:2px;">[${p.owner_name}]</div></div>`;
+        }
+        
+        tr.innerHTML = `
+            <td style="display:flex;align-items:center;gap:12px;">${imgHtml} ${nameDisplay}</td>
+            <td class="${p.quantity <= 10 ? 'text-danger' : ''}">${p.quantity}</td>
+            <td>${formatCurrency(p.cost_price || 0)}</td>
+            <td>${formatCurrency(p.price)}</td>
+            <td>
+                <button class="btn btn-outline btn-icon-only edit-btn" data-id="${p.id}"><i class='bx bx-edit'></i></button>
+                <button class="btn btn-danger btn-icon-only del-btn" data-id="${p.id}"><i class='bx bx-trash'></i></button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
 }
 
 document.getElementById('btn-clear-inventory-filter').addEventListener('click', () => {
@@ -893,6 +942,7 @@ function editProduct(id) {
         
         document.getElementById('product-modal-title').textContent = 'Edit Product';
         showModal(productModal);
+        setTimeout(() => document.getElementById('product-barcode').focus(), 100);
     }
 }
 
@@ -916,8 +966,6 @@ async function loadPOS() {
     currentBill = [];
     updateBillUI();
     document.getElementById('pos-search-input').value = '';
-    document.getElementById('pos-amount-paid').value = '';
-    calculateBalance();
     
     try {
         const res = await fetchAuth(`${API_BASE}/products`);
@@ -935,12 +983,12 @@ function renderPOSProducts(productArray) {
     productArray.forEach(p => {
         const div = document.createElement('div');
         div.className = 'pos-product-card';
-        const imgStyle = p.image ? `background-image:url('${p.image}');background-size:cover;background-position:center;` : `background:#e2e8f0;`;
+        const imgStyle = p.image ? `background-image:url('${p.image}');` : `background-color:#e2e8f0;`;
         div.innerHTML = `
-            <div style="width:100%;height:100px;border-radius:8px;margin-bottom:12px;${imgStyle}"></div>
+            <div class="product-img" style="${imgStyle}"></div>
             <h4>${p.name}</h4>
             <div class="price">${formatCurrency(p.price)}</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Stock: ${p.quantity}</div>
+            <div class="stock">Stock: ${p.quantity}</div>
         `;
         div.addEventListener('click', () => addToBill(p));
         grid.appendChild(div);
@@ -1006,6 +1054,17 @@ function updateBillUI() {
     itemsContainer.innerHTML = '';
     let total = 0;
     
+    if (currentBill.length > 0) {
+        const header = document.createElement('div');
+        header.style = "display: flex; justify-content: space-between; padding: 0 12px 8px 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; font-size: 12px; font-weight: 700; color: var(--text-muted);";
+        header.innerHTML = `
+            <span style="flex: 1;">ITEM</span>
+            <span style="width: 80px; text-align: center;">QTY</span>
+            <span style="width: 80px; text-align: right;">TOTAL</span>
+        `;
+        itemsContainer.appendChild(header);
+    }
+
     currentBill.forEach(item => {
         const amount = item.price * item.quantity;
         total += amount;
@@ -1018,36 +1077,58 @@ function updateBillUI() {
                 <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
                     <input type="number" step="0.01" value="${item.price}" 
                            onchange="updateBillPrice('${item.id}', this.value)" 
-                           style="width:80px; padding:4px; font-size:13px; border:1px solid var(--border); border-radius:4px;"> 
-                    <span style="font-size:13px; color:var(--text-muted)">x ${item.quantity}</span>
+                           style="width:70px; padding:2px 4px; font-size:12px; border:1px solid var(--border); border-radius:4px;"> 
+                    <span style="font-size:12px; color:var(--text-muted)">@ ${item.price}</span>
                 </div>
             </div>
-            <div class="bill-item-actions">
-                <div class="qty-control">
+            <div class="bill-item-actions" style="display: flex; align-items: center; gap: 15px;">
+                <div class="qty-control" style="width: 80px; justify-content: center;">
                     <button class="qty-btn" onclick="updateBillQuantity('${item.id}', -1)">-</button>
-                    <span>${item.quantity}</span>
+                    <span style="font-weight: 600;">${item.quantity}</span>
                     <button class="qty-btn" onclick="updateBillQuantity('${item.id}', 1)">+</button>
                 </div>
-                <div class="item-total">${formatCurrency(amount)}</div>
+                <div class="item-total" style="width: 80px; text-align: right; font-weight: 700; color: var(--text-main);">${formatCurrency(amount)}</div>
             </div>
         `;
         itemsContainer.appendChild(div);
     });
     
     document.getElementById('pos-total-amount').textContent = formatCurrency(total);
-    calculateBalance();
-}
-
-function calculateBalance() {
-    const totalText = document.getElementById('pos-total-amount').textContent;
-    const total = parseFloat(totalText.replace(/[^\d.]/g, '')) || 0;
-    const paid = parseFloat(document.getElementById('pos-amount-paid').value) || 0;
-    const balance = paid > 0 ? paid - total : 0;
     
-    document.getElementById('pos-balance-amount').textContent = formatCurrency(balance);
+    // Update amount to pay if it's a new bill or if total changes
+    const amountToPayInput = document.getElementById('pos-amount-to-pay');
+    amountToPayInput.value = total.toFixed(2);
+    
+    calculateChange();
 }
 
-document.getElementById('pos-amount-paid').addEventListener('input', calculateBalance);
+function calculateChange() {
+    const amountToPay = parseFloat(document.getElementById('pos-amount-to-pay').value) || 0;
+    const amountPaid = parseFloat(document.getElementById('pos-amount-paid').value) || 0;
+    const change = amountPaid - amountToPay;
+    
+    const changeEl = document.getElementById('pos-change-amount');
+    changeEl.textContent = formatCurrency(Math.max(0, change));
+    
+    if (change < 0 && amountPaid > 0) {
+        changeEl.style.color = '#ef4444'; // Red for insufficient payment
+    } else {
+        changeEl.style.color = 'var(--text-main)';
+    }
+}
+
+// Add event listeners for payment calculation
+document.addEventListener('DOMContentLoaded', () => {
+    const amountPaidInput = document.getElementById('pos-amount-paid');
+    const amountToPayInput = document.getElementById('pos-amount-to-pay');
+    
+    if (amountPaidInput) {
+        amountPaidInput.addEventListener('input', calculateChange);
+    }
+    if (amountToPayInput) {
+        amountToPayInput.addEventListener('input', calculateChange);
+    }
+});
 
 document.getElementById('btn-submit-bill').addEventListener('click', async () => {
     if (currentBill.length === 0) {
@@ -1055,20 +1136,27 @@ document.getElementById('btn-submit-bill').addEventListener('click', async () =>
         return;
     }
     
-    let total = currentBill.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    let total = parseFloat(document.getElementById('pos-amount-to-pay').value) || 0;
+    let amountPaid = parseFloat(document.getElementById('pos-amount-paid').value);
     
+    // If amount paid is empty or 0, default to the total amount
+    if (isNaN(amountPaid) || amountPaid <= 0) {
+        amountPaid = total;
+    }
+    
+    const cashier_name = document.getElementById('pos-cashier-name').value || 'System';
     const customer_name = document.getElementById('pos-customer-name').value;
     const customer_phone = document.getElementById('pos-customer-phone').value;
     const payment_method = document.getElementById('pos-payment-method').value;
-    const amount_paid = parseFloat(document.getElementById('pos-amount-paid').value) || 0;
     
     const payload = {
         items: currentBill,
         total_amount: total,
+        amount_paid: amountPaid,
+        cashier_name,
         customer_name,
         customer_phone,
-        payment_method,
-        amount_paid
+        payment_method
     };
     
     try {
@@ -1078,27 +1166,34 @@ document.getElementById('btn-submit-bill').addEventListener('click', async () =>
             body: JSON.stringify(payload)
         });
         
-        if (!res.ok) throw new Error('Failed to create invoice');
+        if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || 'Failed to create invoice');
+        }
         
         const data = await res.json();
         
         // Print
-        showInvoicePrintout({ ...data.invoice, amount_paid });
+        showInvoicePrintout(data.invoice);
         
         // Clear bill
         currentBill = [];
-        document.getElementById('pos-customer-name').value = '';
+        document.getElementById('pos-cashier-name').value = 'Pamidu';
+        document.getElementById('pos-customer-name').value = 'Walk-in Customer';
         document.getElementById('pos-customer-phone').value = '';
         document.getElementById('pos-payment-method').value = 'Cash';
         document.getElementById('pos-amount-paid').value = '';
         updateBillUI();
+        
+        // Reset tabs to items
+        document.getElementById('tab-btn-items').click();
         
         // Reload products cache
         fetchAuth(`${API_BASE}/products`).then(r => r.json()).then(p => products = p);
         
     } catch (err) {
         console.error(err);
-        alert('Error saving bill');
+        alert('Error saving bill: ' + err.message);
     }
 });
 
@@ -1108,6 +1203,7 @@ function showInvoicePrintout(invoice) {
     document.getElementById('receipt-date').textContent = invoice.date;
     document.getElementById('receipt-time').textContent = invoice.time;
     document.getElementById('receipt-payment-method').textContent = invoice.payment_method || 'Cash';
+    document.getElementById('receipt-cashier-name').textContent = invoice.cashier_name || 'System';
     
     if (invoice.customer_name || invoice.customer_phone) {
         if (invoice.customer_name) {
@@ -1146,12 +1242,12 @@ function showInvoicePrintout(invoice) {
     
     document.getElementById('receipt-total-amount').textContent = total.toFixed(2);
     
-    // Payment details
+    // Payment details for receipt
     const amountPaid = invoice.amount_paid || 0;
-    const balance = amountPaid > 0 ? amountPaid - total : 0;
+    const change = amountPaid > 0 ? (amountPaid - total) : 0;
     
-    document.getElementById('receipt-paid-amount').textContent = amountPaid.toFixed(2);
-    document.getElementById('receipt-balance-amount').textContent = balance.toFixed(2);
+    document.getElementById('receipt-amount-paid').textContent = amountPaid.toFixed(2);
+    document.getElementById('receipt-balance-amount').textContent = Math.max(0, change).toFixed(2);
     
     // Automatically open modal and print dialog as per rules
     showModal(invoiceModal);
