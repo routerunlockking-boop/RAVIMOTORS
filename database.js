@@ -97,7 +97,7 @@ const initializeDatabase = async () => {
             await User.create({
                 email: 'ochithyaminsilu6@gmail.com',
                 password: '10699Abc',
-                business_name: 'SMART ZONE',
+                business_name: 'RAVI MOTORS',
                 role: 'admin',
                 is_active: true
             });
@@ -108,7 +108,7 @@ const initializeDatabase = async () => {
                 {
                     email: 'ochithyaminsilu6@gmail.com',
                     password: '10699Abc',
-                    business_name: 'SMART ZONE',
+                    business_name: 'RAVI MOTORS',
                     role: 'admin',
                     is_active: true
                 }
