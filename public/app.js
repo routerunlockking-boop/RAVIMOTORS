@@ -1455,7 +1455,7 @@ document.getElementById('btn-submit-bill').addEventListener('click', async () =>
         
         // Clear bill
         currentBill = [];
-        document.getElementById('pos-cashier-name').value = 'Pamidu';
+        document.getElementById('pos-cashier-name').value = 'System';
         document.getElementById('pos-customer-name').value = 'Walk-in Customer';
         document.getElementById('pos-customer-phone').value = '';
         document.getElementById('pos-payment-method').value = 'Cash';
@@ -1475,7 +1475,7 @@ document.getElementById('btn-submit-bill').addEventListener('click', async () =>
 });
 
 function showInvoicePrintout(invoice) {
-    document.getElementById('receipt-business-name').textContent = invoice.owner_name || currentBusiness || 'Smart Zone';
+    document.getElementById('receipt-business-name').textContent = invoice.owner_name || currentBusiness || 'Ravi Motors';
     document.getElementById('receipt-no').textContent = invoice.invoice_number;
     document.getElementById('receipt-date').textContent = invoice.date;
     document.getElementById('receipt-time').textContent = invoice.time;
