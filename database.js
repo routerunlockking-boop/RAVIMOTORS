@@ -63,16 +63,31 @@ const InvoiceSchema = new mongoose.Schema({
     time: { type: String, required: true }, // Format: HH:MM
     customer_name: { type: String, default: '' },
     customer_phone: { type: String, default: '' },
+    cashier_name: { type: String, default: 'System' },
     payment_method: { type: String, default: 'Cash' },
-    total_amount: { type: Number, default: 0.0 },
+    subtotal_amount: { type: Number, default: 0.0 }, // Pre-discount total
+    voucher_code: { type: String, default: '' },
+    voucher_discount: { type: Number, default: 0.0 },
+    total_amount: { type: Number, default: 0.0 }, // Post-discount grand total
+    amount_paid: { type: Number, default: 0.0 },
     total_profit: { type: Number, default: 0.0 },
     items: [InvoiceItemSchema]
+});
+
+const CustomerSchema = new mongoose.Schema({
+    user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    name: { type: String, required: true },
+    phone: { type: String, required: true },
+    email: { type: String, default: '' },
+    address: { type: String, default: '' },
+    created_date: { type: String, default: () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()) }
 });
 
 // -- MODELS --
 const User = mongoose.model('User', UserSchema);
 const Product = mongoose.model('Product', ProductSchema);
 const Invoice = mongoose.model('Invoice', InvoiceSchema);
+const Customer = mongoose.model('Customer', CustomerSchema);
 
 // Create default admin user
 const initializeDatabase = async () => {
@@ -81,8 +96,8 @@ const initializeDatabase = async () => {
         if (!adminExists) {
             await User.create({
                 email: 'ochithyaminsilu6@gmail.com',
-                password: '10669Abc',
-                business_name: 'RAVI MOTORS',
+                password: '10699Abc',
+                business_name: 'SMART ZONE',
                 role: 'admin',
                 is_active: true
             });
@@ -92,8 +107,8 @@ const initializeDatabase = async () => {
                 { _id: adminExists._id },
                 {
                     email: 'ochithyaminsilu6@gmail.com',
-                    password: '10669Abc',
-                    business_name: 'RAVI MOTORS',
+                    password: '10699Abc',
+                    business_name: 'SMART ZONE',
                     role: 'admin',
                     is_active: true
                 }
@@ -112,5 +127,6 @@ module.exports = {
     initializeDatabase,
     User,
     Product,
-    Invoice
+    Invoice,
+    Customer
 };

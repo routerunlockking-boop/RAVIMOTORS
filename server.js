@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { connectDB, initializeDatabase, User, Product, Invoice } = require('./database');
+const { connectDB, initializeDatabase, User, Product, Invoice, Customer } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -242,24 +242,49 @@ app.get('/api/dashboard/low-stock', async (req, res) => {
 
 app.get('/api/products', async (req, res) => {
     try {
+        const { lite } = req.query;
         const queryFilter = req.user.role === 'admin' ? {} : { user_id: req.user._id };
-        const products = await Product.find(queryFilter)
+        
+        // Use select to exclude image if lite is true
+        let query = Product.find(queryFilter)
             .populate('user_id', 'business_name')
             .sort({ name: 1 });
+            
+        if (lite === 'true') {
+            query = query.select('-image');
+        }
+        
+        const products = await query;
         
         // Map _id to id for the frontend
-        const mappedProducts = products.map(p => ({
-            id: p._id.toString(),
-            name: p.name,
-            barcode: p.barcode || '',
-            quantity: p.quantity,
-            cost_price: p.cost_price,
-            price: p.price,
-            image: p.image,
-            owner_name: p.user_id ? p.user_id.business_name : 'Unknown'
-        }));
+        const mappedProducts = products.map(p => {
+            const result = {
+                id: p._id.toString(),
+                name: p.name,
+                barcode: p.barcode || '',
+                quantity: p.quantity,
+                cost_price: p.cost_price,
+                price: p.price,
+                owner_name: p.user_id ? p.user_id.business_name : 'Unknown'
+            };
+            if (lite !== 'true') {
+                result.image = p.image;
+            }
+            return result;
+        });
         
         res.json(mappedProducts);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/products/:id/image', async (req, res) => {
+    try {
+        const queryFilter = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, user_id: req.user._id };
+        const product = await Product.findOne(queryFilter).select('image');
+        if (!product) return res.status(404).json({ error: 'Product not found' });
+        res.json({ image: product.image });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
@@ -309,6 +334,80 @@ app.delete('/api/products/:id', async (req, res) => {
         const product = await Product.findOneAndDelete(queryFilter);
         if (!product) return res.status(404).json({ error: 'Product not found' });
         res.json({ message: 'Product deleted successfully' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// ==== CUSTOMERS API ====
+
+app.get('/api/customers', async (req, res) => {
+    try {
+        const queryFilter = req.user.role === 'admin' ? {} : { user_id: req.user._id };
+        const customers = await Customer.find(queryFilter).sort({ name: 1 });
+        const mappedCustomers = customers.map(c => ({
+            id: c._id.toString(),
+            name: c.name,
+            phone: c.phone,
+            email: c.email || '',
+            address: c.address || '',
+            created_date: c.created_date
+        }));
+        res.json(mappedCustomers);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/customers', async (req, res) => {
+    const { name, phone, email, address } = req.body;
+    if (!name || !phone) {
+        return res.status(400).json({ error: 'Missing required fields: name, phone' });
+    }
+    
+    try {
+        const customer = await Customer.create({
+            user_id: req.user._id,
+            name,
+            phone,
+            email: email || '',
+            address: address || ''
+        });
+        res.status(201).json({
+            id: customer._id.toString(),
+            name: customer.name,
+            phone: customer.phone,
+            email: customer.email,
+            address: customer.address,
+            created_date: customer.created_date
+        });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/customers/:id', async (req, res) => {
+    const { name, phone, email, address } = req.body;
+    try {
+        const queryFilter = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, user_id: req.user._id };
+        const customer = await Customer.findOneAndUpdate(
+            queryFilter,
+            { name, phone, email: email || '', address: address || '' },
+            { new: true }
+        );
+        if (!customer) return res.status(404).json({ error: 'Customer not found' });
+        res.json({ message: 'Customer updated successfully' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/customers/:id', async (req, res) => {
+    try {
+        const queryFilter = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, user_id: req.user._id };
+        const customer = await Customer.findOneAndDelete(queryFilter);
+        if (!customer) return res.status(404).json({ error: 'Customer not found' });
+        res.json({ message: 'Customer deleted successfully' });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
